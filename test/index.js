@@ -1,93 +1,95 @@
 import { html } from 'lit-html/lib/lit-extended';
 import { repeat } from 'lit-html/lib/repeat';
-import { fromEvent, merge } from 'rxjs';
-import { debounceTime, map, scan } from 'rxjs/operators';
+import { merge, Subject } from 'rxjs';
+import { debounceTime, scan, tap } from 'rxjs/operators';
 
 import { litObservable } from '..';
 
-// observable for 'loaded' event
-const loadedObservable = fromEvent(document, 'loaded-accounts')
-  .pipe(map(i => i.detail.accounts));
+const log = tag => (...args) => console.log(tag, ...args);
+const tapLog = tap(log('tap'));
 
-// enrichments
-const enrichmentsObservable = fromEvent(document, 'enrichment')
-  .pipe(map(i => [i.detail.enrichment]));
+const loaded$ = new Subject();
+const enrichments$ = new Subject();
 
 // combine both into one observable
-const combined = merge(loadedObservable, enrichmentsObservable)
+const combined$ = merge(loaded$, enrichments$)
   // merge enrichments with accounts
   .pipe(
-    scan((sum, items) => {
-      for (let i of items) {
-        // look for existing in sum
-        const idx = sum.findIndex(ex => i.id === ex.id);
-
+    scan((accts, items) => {
+      for (let item of items) {
+        // look for existing in accts
+        const idx = accts.findIndex(ex => item.id === ex.id);
         if (idx === -1) {
-          // add to sum
-          sum = sum.concat(i);
+          // add to accts
+          accts = accts.concat(item);
           continue;
         }
 
-        const existing = sum[idx];
-        sum = sum.slice();
+        const existing = accts[idx];
+        accts = accts.slice();
 
-        // if existing is older, update it's balance
-        if (existing.fetchedTime < i.fetchedTime) {
-          // existing.fetchedTime = i.fetchedTime;
-          // existing.balance = i.balance;
-          sum[idx] = Object.assign({}, existing, i);
-        } else if (i.name) {
+        // if existing is older, update its balance
+        if (existing.fetchedTime < item.fetchedTime) {
+          // existing.fetchedTime = item.fetchedTime;
+          // existing.balance = item.balance;
+          accts[idx] = Object.assign({}, existing, item);
+        } else if (item.name) {
           // if existing is newer, and incoming has a name, update existing name
-          sum[idx] = Object.assign({}, existing, { name: i.name });
+          accts[idx] = Object.assign({}, existing, { name: item.name });
         }
       }
-      return sum;
+      return accts;
     }, []),
     // enrichment events can be rapid, debounce so we don't overwhelm the browser
-    debounceTime(500)
+    debounceTime(500),
+    tapLog
   );
 
 const Account = ({id, balance, name}) => html`
-  <li>id:${id} name:${name} balance:${balance}</li>
+  <tr>
+    <td>${id}</td>
+    <td>${name}</td>
+    <td>${balance}</td>
+  </tr>
 `;
 
-const AccountList = (items = []) => items.length === 0 ?
-  html`<p>No accounts</p>` :
-  html`
-    <ul>
-      ${repeat(items, i => i.id, Account)}
-    </ul>
-  `;
-
-function dispatchLoadedAccounts() {
-  document.dispatchEvent(new CustomEvent('loaded-accounts', {
-    detail: {
-      accounts: [
-        {id:1, name:'foo', balance:1.00, fetchedTime:2},
-        {id:2, name:'bar', balance:3.00, fetchedTime:2},
-      ]
-    }
-  }));
+const AccountList = (items = []) => {
+  if (items.length > 0) {
+    return html`<table>
+      <thead>
+        <th>id</th>
+        <th>name</th>
+        <th>balance</th>
+      </thead>
+      <tbody>
+        ${repeat(items, i => i.id, Account)}
+      </tbody>
+    </table>`;
+  }
+  return html`<p>No accounts</p>`;
 }
 
-function dispatchEnrichment() {
-  document.dispatchEvent(new CustomEvent('enrichment', {
-    detail: {
-      enrichment: {id:1, fetchedTime:3, balance: 4.00}
-    }
-  }));
-}
+const ACCOUNTS = [
+  {id: 1, name: 'foo', balance: 1.00, fetchedTime: 2},
+  {id: 2, name: 'bar', balance: 3.00, fetchedTime: 2},
+];
+
+const ENRICHMENT = {id: 1, fetchedTime: 3, balance: 4.00};
 
 const AccountsApp = ({ accounts }) => html`
   <button type="button"
-    on-click=${dispatchLoadedAccounts}>load accounts</button>
+    on-click=${() => loaded$.next(ACCOUNTS)}>
+    Load accounts
+  </button>
   <button type="button"
-    on-click=${dispatchEnrichment}>add enrichment</button>
+    on-click=${() => enrichments$.next([ENRICHMENT])}>
+    Add enrichment
+  </button>
   ${AccountList(accounts)}
 `;
 
 customElements.define('accounts-app',
   litObservable(
-    combined,
-    s => ({ accounts: s }),
+    combined$,
+    state => ({ accounts: state }),
   )(AccountsApp));

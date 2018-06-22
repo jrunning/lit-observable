@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "license": "Apache-2.0",
+  "scripts": {
+    "start": "cd test && webpack-serve --config webpack.config.js --open"
+  },
   "devDependencies": {
     "webpack": "^4.12.0",
     "webpack-cli": "^3.0.8",
